@@ -123,11 +123,20 @@ do
   local c = keycache.new("keyctl", { run = run, now = os.time })
   check("keyctl miss", c.get(PATH) == nil)
   c.put(PATH, ID, 28800)
-  check("padd argv", table.concat(calls[2].argv, " ") == "keyctl padd user fnox-plugin-hq:" .. PATH .. " @u" and calls[2].stdin == ID)
-  check("setperm user-only read", table.concat(calls[3].argv, " ") == "keyctl setperm 101 0x3f0b0000")
-  check("timeout", table.concat(calls[4].argv, " ") == "keyctl timeout 101 28800")
+  check("link user keyring into the session", table.concat(calls[2].argv, " ") == "keyctl link @u @s")
+  check("padd argv", table.concat(calls[3].argv, " ") == "keyctl padd user fnox-plugin-hq:" .. PATH .. " @u" and calls[3].stdin == ID)
+  check("setperm user-only read", table.concat(calls[4].argv, " ") == "keyctl setperm 101 0x3f0b0000")
+  check("timeout", table.concat(calls[5].argv, " ") == "keyctl timeout 101 28800")
   check("keyctl hit", c.get(PATH) == ID)
   check("keyctl clear", c.clear(PATH) == true and c.get(PATH) == nil)
+  -- a refused timeout must not leave the identity behind
+  local strict = function(argv, opts)
+    if argv[2] == "timeout" then return { ok = false, stdout = "", stderr = "Permission denied" } end
+    return run(argv, opts)
+  end
+  local c2 = keycache.new("keyctl", { run = strict, now = os.time })
+  check("refused timeout errors", not pcall(c2.put, PATH, ID, 60))
+  check("refused timeout leaves nothing", c2.get(PATH) == nil)
 end
 
 -- detect + none + unknown

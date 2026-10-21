@@ -38,9 +38,15 @@ backend() {
 keyctl_find() { keyctl search @u user "$NAME:$1" 2>/dev/null; }
 keyctl_get() { kid=$(keyctl_find "$1") || return 1; keyctl pipe "$kid" 2>/dev/null; }
 keyctl_put() {
+  # possess the user keyring from this session (some sessions don't link it), or setperm/timeout are refused
+  keyctl link @u @s >/dev/null 2>&1 || true
   kid=$(keyctl padd user "$NAME:$1" @u) || die "keyctl padd failed"
-  keyctl setperm "$kid" 0x3f0b0000 >/dev/null
-  keyctl timeout "$kid" "$TTL" >/dev/null
+  if ! { keyctl setperm "$kid" 0x3f0b0000 && keyctl timeout "$kid" "$TTL"; } >/dev/null; then
+    # never leave an identity in the keyring without its timeout
+    keyctl revoke "$kid" >/dev/null 2>&1 || true
+    keyctl unlink "$kid" @u >/dev/null 2>&1 || true
+    die "keyctl could not set perms/timeout"
+  fi
 }
 keyctl_clear() { kid=$(keyctl_find "$1") || return 1; keyctl revoke "$kid" >/dev/null 2>&1 || true; keyctl unlink "$kid" @u >/dev/null 2>&1 || true; }
 

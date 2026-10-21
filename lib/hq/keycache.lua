@@ -31,12 +31,20 @@ local function keyctl(d)
       return nil
     end,
     put = function(id, value, ttl)
+      -- possess the user keyring from this session (some sessions don't link it), or setperm/timeout are refused
+      d.run({ "keyctl", "link", "@u", "@s" })
       local r = d.run({ "keyctl", "padd", "user", M.NAME .. ":" .. id, "@u" }, { stdin = value })
       if not r.ok then error("keyctl padd failed: " .. r.stderr) end
       local kid = trim(r.stdout)
       -- possessor: all; user: view, read, search (other processes of the same user, e.g. agents)
-      d.run({ "keyctl", "setperm", kid, "0x3f0b0000" })
-      d.run({ "keyctl", "timeout", kid, tostring(ttl) })
+      local p = d.run({ "keyctl", "setperm", kid, "0x3f0b0000" })
+      local t = p.ok and d.run({ "keyctl", "timeout", kid, tostring(ttl) })
+      if not (p.ok and t.ok) then
+        -- never leave an identity in the keyring without its timeout
+        d.run({ "keyctl", "revoke", kid })
+        d.run({ "keyctl", "unlink", kid, "@u" })
+        error("keyctl could not set perms/timeout: " .. ((t and t.stderr) or p.stderr))
+      end
     end,
     clear = function(id)
       local kid = find(id)
