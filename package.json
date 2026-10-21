@@ -1,6 +1,6 @@
 {
   "name": "fnox-plugin-hq",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "fnox provider for sealed stores: servers keep only age ciphertext (PROTOCOL.md) + a conformance suite any server can run",
   "license": "MIT",
   "type": "module",

@@ -83,10 +83,10 @@ end
 
 --- The age identity text: HQ_IDENTITY, a plain identity file (machines, CI), or the passphrase-protected
 --- file, from the session cache or decrypted here (age asks for the passphrase on the terminal).
-local function identity(ctx)
+local function identity(ctx, file)
   local env = os.getenv("HQ_IDENTITY")
   if env and env ~= "" then return env end
-  local path = expand(opt(ctx, "identity_file") or os.getenv("HQ_IDENTITY_FILE") or DEFAULT_IDENTITY)
+  local path = expand(file or opt(ctx, "identity_file") or os.getenv("HQ_IDENTITY_FILE") or DEFAULT_IDENTITY)
   local f = io.open(path, "r")
   if not f then error("no age identity at " .. path .. "; create one with `hq keygen`") end
   local body = f:read("a"); f:close()
@@ -148,11 +148,25 @@ local function get_batch(ctx, refs)
   return out
 end
 
+-- mode = "identity": this provider instance yields the unlocked identity itself (ref = identity file path), for
+-- fnox's own age provider (`identity = { provider = "hq-identity", value = "~/.config/hq/identity.age" }`), which
+-- cannot read passphrase-protected identity files: break-glass configs in git, decrypted with the same session unlock.
+local function identity_mode(ctx) return opt(ctx, "mode") == "identity" end
+
 return {
-  get = function(ctx, ref) return get_batch(ctx, { ref })[ref] end,
-  get_batch = get_batch,
+  get = function(ctx, ref)
+    if identity_mode(ctx) then return identity(ctx, ref ~= "" and ref or nil) end
+    return get_batch(ctx, { ref })[ref]
+  end,
+  get_batch = function(ctx, refs)
+    if not identity_mode(ctx) then return get_batch(ctx, refs) end
+    local out = {}
+    for _, ref in ipairs(refs) do out[ref] = identity(ctx, ref ~= "" and ref or nil) end
+    return out
+  end,
 
   put = function(ctx, key, value)
+    if identity_mode(ctx) then error("mode = identity is read-only") end
     local ref = ref_of(ctx, key)
     for _ = 1, 2 do
       local recipients = call_ok(ctx, "GET", "/recipients", nil, "get recipients").recipients or {}
@@ -165,6 +179,7 @@ return {
   end,
 
   test = function(ctx)
+    if identity_mode(ctx) then return end
     local rs = call_ok(ctx, "GET", "/recipients", nil, "get recipients").recipients or {}
     if #rs == 0 then error("reachable, but the scope has no recipients") end
   end,

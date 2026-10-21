@@ -122,6 +122,38 @@ describe("macos backend (fake security) — untested on real macOS", () => {
     expect(await new Response(q.stderr).text()).toContain("locked")
   })
 
+  test("mode = identity feeds fnox's age provider (break-glass in git) from the same unlock", async () => {
+    if (!tools || !setsid) return console.warn("skipped: needs fnox, age, setsid")
+    const bg = join(dir, "bg")
+    mkdirSync(bg, { recursive: true })
+    writeFileSync(join(bg, "fnox.toml"), `root = true
+[providers.hq-identity]
+type = "lua"
+plugin = ${JSON.stringify(root)}
+daemon_cache = false
+options = { mode = "identity" }
+[providers.age]
+type = "age"
+recipients = [${JSON.stringify(await identityToRecipient(identity.trim()))}]
+identity = { provider = "hq-identity", value = ${JSON.stringify(idFile)} }
+`)
+    const run = (args: string[]) => sh(["fnox", ...args], env).then((r) => r)
+    const inBg = async (args: string[]) => {
+      const p = Bun.spawn([setsid!, "-w", "fnox", ...args], {
+        cwd: bg, stdout: "pipe", stderr: "pipe", stdin: "ignore",
+        env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, FNOX_DAEMON: "off", FNOX_CONFIG_DIR: join(dir, "cfg"), HQ_IDENTITY: "", FAKE_SECURITY_DIR: join(dir, "keychain"), ...env },
+      })
+      const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+      return { out, err, code }
+    }
+    void run
+    await hq(["lock"], env)
+    expect((await inBg(["set", "DEPLOY_TOKEN", "break-glass-value", "--provider", "age"])).code).toBe(0) // encrypting needs no unlock
+    expect((await inBg(["exec", "--", "sh", "-c", 'test "$DEPLOY_TOKEN" = break-glass-value && echo match'])).code).not.toBe(0) // locked
+    await seedMac(now() + 3600)
+    expect((await inBg(["exec", "--", "sh", "-c", 'test "$DEPLOY_TOKEN" = break-glass-value && echo match'])).out.trim()).toBe("match")
+  })
+
   test("hq status / recipient / lock read and drop the same item", async () => {
     await seedMac(now() + 3600)
     expect((await hq(["status"], env)).out.trim()).toBe("unlocked (macos)")

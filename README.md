@@ -17,7 +17,7 @@ Needs `fnox` and `age` / `age-keygen` on `PATH`.
 
 ```sh
 # 1. once per machine: a passphrase-protected identity; prints your public key (age1…)
-fnox plugin install hq hq-org/fnox-plugin-hq#v0.1.1
+fnox plugin install hq hq-org/fnox-plugin-hq#v0.2.0
 ln -s ~/.local/share/fnox/plugins/hq/bin/hq ~/.local/bin/hq
 hq keygen                      # → ~/.config/hq/identity.age
 # 2. register the printed age1… key with the server (tasks: an admin sets it on your Person)
@@ -27,7 +27,7 @@ hq keygen                      # → ~/.config/hq/identity.age
 
 ```toml
 [plugins]
-hq = "hq-org/fnox-plugin-hq#v0.1.1"
+hq = "hq-org/fnox-plugin-hq#v0.2.0"
 
 [providers.hq]
 type = "lua"
@@ -73,6 +73,25 @@ fnox's own [daemon](https://fnox.jdx.dev/guide/daemon.html) still caches resolve
 is not enough for agents: a value the daemon has not seen yet is resolved outside it, and any change to a
 `fnox.toml` empties it. The key cache covers both.
 
+### Break-glass: fnox's age provider with the same unlock
+
+fnox's built-in `age` provider cannot read a passphrase-protected identity file. A second instance of this plugin
+with `mode = "identity"` hands it the identity from the key cache (asking for the passphrase in a terminal if
+locked), so values encrypted into `fnox.toml` itself decrypt with the same session unlock, without any server:
+
+```toml
+[providers.hq-identity]
+type = "lua"
+plugin = "hq"
+daemon_cache = false
+options = { mode = "identity" }
+
+[profiles.break-glass.providers.age]
+type = "age"
+recipients = ["age1…"]
+identity = { provider = "hq-identity", value = "~/.config/hq/identity.age" }
+```
+
 ### Key cache
 
 One small seam (`lib/hq/keycache.lua`; `bin/hq` mirrors it in sh): `get(id)`, `put(id, value, ttl)`, `clear(id)`,
@@ -108,7 +127,7 @@ conformance("my server", async () => ({
 // afterwards: grep your storage for PLANT — it must not be there
 ```
 
-Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.1.1`.
+Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.2.0`.
 
 ## Development
 
