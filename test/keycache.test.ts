@@ -101,6 +101,27 @@ describe("macos backend (fake security) — untested on real macOS", () => {
     expect(keychainItems()).toEqual([])
   })
 
+  test("hq decrypt: ciphertext on stdin, plaintext out, identity from the cache; locked without it", async () => {
+    if (!Bun.which("age") || !setsid) return console.warn("skipped: needs age, setsid")
+    const e = new Encrypter()
+    e.addRecipient(await identityToRecipient(identity.trim()))
+    const ct = armor.encode(await e.encrypt("re-encrypt me"))
+    await seedMac(now() + 3600)
+    const p = Bun.spawn([setsid, "-w", join(root, "bin/hq"), "decrypt", idFile], {
+      cwd: dir, stdin: new TextEncoder().encode(ct), stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, HQ_KEY_CACHE: "macos", HQ_IDENTITY: "", FAKE_SECURITY_DIR: join(dir, "keychain") },
+    })
+    expect(await new Response(p.stdout).text()).toBe("re-encrypt me")
+    expect(await p.exited).toBe(0)
+    await hq(["lock"], env)
+    const q = Bun.spawn([setsid, "-w", join(root, "bin/hq"), "decrypt", idFile], {
+      cwd: dir, stdin: new TextEncoder().encode(ct), stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, HQ_KEY_CACHE: "macos", HQ_IDENTITY: "", FAKE_SECURITY_DIR: join(dir, "keychain") },
+    })
+    expect(await q.exited).not.toBe(0)
+    expect(await new Response(q.stderr).text()).toContain("locked")
+  })
+
   test("hq status / recipient / lock read and drop the same item", async () => {
     await seedMac(now() + 3600)
     expect((await hq(["status"], env)).out.trim()).toBe("unlocked (macos)")

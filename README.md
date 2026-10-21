@@ -17,7 +17,7 @@ Needs `fnox` and `age` / `age-keygen` on `PATH`.
 
 ```sh
 # 1. once per machine: a passphrase-protected identity; prints your public key (age1…)
-fnox plugin install hq hq-org/fnox-plugin-hq#v0.1.0
+fnox plugin install hq hq-org/fnox-plugin-hq#v0.1.1
 ln -s ~/.local/share/fnox/plugins/hq/bin/hq ~/.local/bin/hq
 hq keygen                      # → ~/.config/hq/identity.age
 # 2. register the printed age1… key with the server (tasks: an admin sets it on your Person)
@@ -27,7 +27,7 @@ hq keygen                      # → ~/.config/hq/identity.age
 
 ```toml
 [plugins]
-hq = "hq-org/fnox-plugin-hq#v0.1.0"
+hq = "hq-org/fnox-plugin-hq#v0.1.1"
 
 [providers.hq]
 type = "lua"
@@ -63,7 +63,9 @@ fnox exec -- ./deploy.sh
 The identity file is protected by a passphrase. The first decrypt in a terminal asks for it (age prompts on the
 terminal), and the plugin puts the unlocked identity into the session **key cache** for `key_ttl`. From then on
 every `fnox exec` by you or your agents, in any shell of your user, decrypts on its own, including secrets added
-later (from the web, from a teammate). `hq unlock` does the same explicitly; `hq lock` ends it early.
+later (from the web, from a teammate). `hq unlock` does the same explicitly; `hq lock` ends it early;
+`hq status` tells which. `hq decrypt` (ciphertext on stdin, plaintext out) uses the same identity, for re-encryption
+tools such as `tasks secrets reencrypt`.
 Without a terminal and without a cached identity, the plugin raises fnox's authentication error, and fnox offers
 the provider's `auth_command` (`hq unlock`) when it runs in a terminal.
 
@@ -106,7 +108,7 @@ conformance("my server", async () => ({
 // afterwards: grep your storage for PLANT — it must not be there
 ```
 
-Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.1.0`.
+Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.1.1`.
 
 ## Development
 

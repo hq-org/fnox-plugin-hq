@@ -6,6 +6,7 @@
 #   hq lock [file]       drop the cached identity
 #   hq status [file]     locked | unlocked (backend)
 #   hq recipient [file]  print the public key (needs the identity unlocked or plain)
+#   hq decrypt [file]    armored age ciphertext on stdin → plaintext on stdout (for re-encryption tools)
 # file defaults to $HQ_IDENTITY_FILE or ~/.config/hq/identity.age; backend = $HQ_KEY_CACHE (auto|keyctl|macos|none).
 set -eu
 
@@ -73,6 +74,18 @@ none_clear() { return 1; }
 
 plain() { grep -q 'AGE-SECRET-KEY-' "$1" 2>/dev/null; }
 
+# the identity text, like the plugin: HQ_IDENTITY, a plain file, the cache, or the passphrase (then cached)
+identity() {
+  if [ -n "${HQ_IDENTITY:-}" ]; then printf '%s\n' "$HQ_IDENTITY"; return; fi
+  [ -r "$file" ] || die "no identity at $file (hq keygen)"
+  if plain "$file"; then cat "$file"; return; fi
+  b=$(backend)
+  if id=$("${b}_get" "$file"); then printf '%s\n' "$id"; return; fi
+  id=$(age -d "$file") || die "identity is locked: run hq unlock in a terminal"
+  printf '%s\n' "$id" | "${b}_put" "$file"
+  printf '%s\n' "$id"
+}
+
 cmd=${1:-help}
 [ $# -gt 0 ] && shift
 file=$(abspath "${1:-${HQ_IDENTITY_FILE:-$HOME/.config/hq/identity.age}}")
@@ -111,6 +124,12 @@ case $cmd in
     if plain "$file"; then age-keygen -y "$file"
     else b=$(backend); id=$("${b}_get" "$file") || die "locked: hq unlock first"; printf '%s\n' "$id" | age-keygen -y || die "locked: hq unlock first"; fi
     ;;
-  help|-h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "unknown command '$cmd' (keygen, unlock, lock, status, recipient)" ;;
+  decrypt)
+    ct=$(cat)
+    id=$(identity)
+    # identity on fd 3, ciphertext on stdin: neither in argv nor in a file
+    printf '%s\n' "$id" | { exec 3<&0; printf '%s\n' "$ct" | age -d -i /dev/fd/3; }
+    ;;
+  help|-h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$cmd' (keygen, unlock, lock, status, recipient, decrypt)" ;;
 esac
