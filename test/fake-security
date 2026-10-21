@@ -1,0 +1,44 @@
+#!/bin/sh
+# Fake macOS `security` for tests: generic passwords as files in $FAKE_SECURITY_DIR; every argv logged.
+set -eu
+dir=${FAKE_SECURITY_DIR:?}
+printf '%s\n' "$*" >> "$dir/argv.log"
+
+item() { printf '%s/item_%s' "$dir" "$(printf '%s|%s' "$1" "$2" | cksum | cut -d' ' -f1)"; }
+
+parse() {
+  svc=""; acct=""; pw=""
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -s) svc=$2; shift ;;
+      -a) acct=$2; shift ;;
+      -w) if [ $# -gt 1 ]; then pw=$2; shift; fi ;;
+    esac
+    shift
+  done
+}
+
+case ${1:-} in
+  -i)
+    while IFS= read -r line; do
+      eval "set -- $line"
+      [ "$1" = add-generic-password ] || { echo "unsupported: $1" >&2; exit 1; }
+      shift
+      parse "$@"
+      printf '%s' "$pw" > "$(item "$svc" "$acct")"
+    done
+    ;;
+  find-generic-password)
+    shift; parse "$@"
+    f=$(item "$svc" "$acct")
+    [ -f "$f" ] || { echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2; exit 44; }
+    cat "$f"; echo
+    ;;
+  delete-generic-password)
+    shift; parse "$@"
+    f=$(item "$svc" "$acct")
+    [ -f "$f" ] || exit 44
+    rm "$f"
+    ;;
+  *) echo "unsupported: $*" >&2; exit 1 ;;
+esac
