@@ -18,6 +18,17 @@ opaque age ciphertext, checks who may read and write, and keeps an audit trail.
 - **ciphertext**: an ASCII-armored age file (`-----BEGIN AGE ENCRYPTED FILE-----` … `-----END AGE ENCRYPTED FILE-----`),
   at most 64 KiB, whose decoded body starts with `age-encryption.org/v1\n`.
 
+## Personal scopes
+
+A server may offer personal scopes: a scope that belongs to one person (tasks: the person's id, `usr_…`).
+Nothing on the wire changes; the server enforces:
+
+- recipients = that person's own public key(s) only;
+- every request on the scope by anyone else is `403`, whatever their other permissions (administrators included);
+- its secrets never appear in another scope or in listings for other people.
+
+Use: credentials of one person that follow them into every project (an API token for their own cloud account).
+
 ## Auth
 
 Every request carries `Authorization: Bearer <token>`. Missing, unknown or revoked token → `401`
