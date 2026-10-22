@@ -22,7 +22,7 @@ let server: ReturnType<typeof Bun.serve>
 async function sh(cmd: string[], env: Record<string, string> = {}, stdin?: string) {
   const p = Bun.spawn(setsid && !stdin ? [setsid, "-w", ...cmd] : cmd, {
     cwd: dir, stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
-    env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, FNOX_DAEMON: "off", FNOX_CONFIG_DIR: join(dir, "cfg"), HQ_IDENTITY: "", HQ_TOKEN: "", FAKE_SECURITY_DIR: join(dir, "keychain"), ...env },
+    env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, FNOX_DAEMON: "off", FNOX_CONFIG_DIR: join(dir, "cfg"), HQ_IDENTITY: "", HQ_TOKEN: "", HQ_NONINTERACTIVE: "", HQ_LOCKED_MESSAGE: "", FAKE_SECURITY_DIR: join(dir, "keychain"), ...env },
   })
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
   return { out, err, code }
@@ -77,11 +77,32 @@ test("lua unit spec (fake runner and clock)", async () => {
 describe("macos backend (fake security) — untested on real macOS", () => {
   const env = { HQ_KEY_CACHE: "macos" }
 
-  test("locked: no terminal, no cache → authentication failure naming `hq unlock`", async () => {
+  test("locked: no terminal, no cache → fails at once naming `hq unlock`", async () => {
     if (!tools || !setsid) return console.warn("skipped: needs fnox, age, setsid")
     const r = await exec(env)
     expect(r.code).not.toBe(0)
-    expect(r.err).toContain("hq unlock")
+    expect(r.err).toContain("locked \u2014 run `hq unlock` in a terminal")
+  })
+
+  test("HQ_NONINTERACTIVE (agents): locked fails fast even with a terminal; never a passphrase prompt; message configurable", async () => {
+    if (!tools || !Bun.which("script")) return console.warn("skipped: needs fnox, age, script")
+    await hq(["lock"], env)
+    const msg = "locked \u2014 ask Michael to run `hq unlock`"
+    const inTerminal = (c: string, e: Record<string, string>) => sh(["script", "-qec", c, "/dev/null"], { ...env, ...e }, "")
+    const t0 = Date.now()
+    const r = await inTerminal("fnox exec --if-missing error -- sh -c 'echo ran'", { HQ_NONINTERACTIVE: "1", HQ_LOCKED_MESSAGE: msg })
+    expect(r.out).toContain(msg)
+    expect(r.out).not.toContain("passphrase")
+    expect(r.out).not.toContain("ran")
+    const viaOption = await Bun.file(join(dir, "fnox.toml")).text()
+    writeFileSync(join(dir, "fnox.toml"), viaOption.replace("identity_file =", `locked_message = ${JSON.stringify(msg)}, identity_file =`))
+    const o = await inTerminal("fnox exec --if-missing error -- sh -c 'echo ran'", { HQ_NONINTERACTIVE: "1" })
+    writeFileSync(join(dir, "fnox.toml"), viaOption)
+    expect(o.out).toContain(msg)
+    const u = await inTerminal(`${join(root, "bin/hq")} unlock ${idFile}`, { HQ_NONINTERACTIVE: "1", HQ_LOCKED_MESSAGE: msg })
+    expect(u.out).toContain(msg)
+    expect(u.out).not.toContain("passphrase")
+    expect(Date.now() - t0).toBeLessThan(10_000)
   })
 
   test("unlocked: the plugin decrypts from the Keychain item without a terminal", async () => {

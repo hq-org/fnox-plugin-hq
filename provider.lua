@@ -81,6 +81,16 @@ local function cache(ctx)
   })
 end
 
+--- No one to ask for a passphrase: HQ_NONINTERACTIVE (agents, CI) or no terminal to open. Then a locked identity
+--- fails at once instead of age waiting on a prompt nobody answers.
+local function noninteractive()
+  local v = os.getenv("HQ_NONINTERACTIVE")
+  if v and v ~= "" and v ~= "0" then return true end
+  return not cmd.run({ "sh", "-c", ": </dev/tty" }).ok
+end
+
+local DEFAULT_LOCKED = "locked — run `hq unlock` in a terminal"
+
 --- The age identity text: HQ_IDENTITY, a plain identity file (machines, CI), or the passphrase-protected
 --- file, from the session cache or decrypted here (age asks for the passphrase on the terminal).
 local function identity(ctx, file)
@@ -94,6 +104,11 @@ local function identity(ctx, file)
   local c = cache(ctx)
   local id = c.get(path)
   if id then return id end
+  -- a plain error, not auth_error: fnox would run auth_command (`hq unlock`), which would block the same way
+  if noninteractive() then
+    local env_msg = os.getenv("HQ_LOCKED_MESSAGE")
+    error(opt(ctx, "locked_message") or (env_msg ~= "" and env_msg) or DEFAULT_LOCKED, 0)
+  end
   local r = cmd.run({ "age", "-d", path })
   if not r.ok then
     fnox.auth_error("age identity is locked: run `hq unlock` in a terminal (" .. (r.stderr:gsub("%s+$", "")) .. ")")

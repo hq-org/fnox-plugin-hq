@@ -17,7 +17,7 @@ Needs `fnox` and `age` / `age-keygen` on `PATH`.
 
 ```sh
 # 1. once per machine: a passphrase-protected identity; prints your public key (age1…)
-fnox plugin install hq hq-org/fnox-plugin-hq#v0.2.0
+fnox plugin install hq hq-org/fnox-plugin-hq#v0.4.0
 ln -s ~/.local/share/fnox/plugins/hq/bin/hq ~/.local/bin/hq
 hq keygen                      # → ~/.config/hq/identity.age
 # 2. register the printed age1… key with the server (tasks: an admin sets it on your Person)
@@ -27,7 +27,7 @@ hq keygen                      # → ~/.config/hq/identity.age
 
 ```toml
 [plugins]
-hq = "hq-org/fnox-plugin-hq#v0.2.0"
+hq = "hq-org/fnox-plugin-hq#v0.4.0"
 
 [providers.hq]
 type = "lua"
@@ -57,6 +57,7 @@ fnox exec -- ./deploy.sh
 | `key_cache` | `auto` | `auto`, `keyctl`, `macos`, `none`; else `HQ_KEY_CACHE` |
 | `key_ttl` | `28800` | seconds the unlocked identity stays cached |
 | `login_hint` | — | appended to "the store refused the token (401)" |
+| `locked_message` | `locked — run \`hq unlock\` in a terminal` | the error when the identity is locked and nobody can type the passphrase; else `HQ_LOCKED_MESSAGE` (e.g. `locked — ask Michael to run \`hq unlock\``) |
 
 ## Unlock once per session
 
@@ -66,8 +67,11 @@ every `fnox exec` by you or your agents, in any shell of your user, decrypts on 
 later (from the web, from a teammate). `hq unlock` does the same explicitly; `hq lock` ends it early;
 `hq status` tells which. `hq decrypt` (ciphertext on stdin, plaintext out) uses the same identity, for re-encryption
 tools such as `tasks secrets reencrypt`.
-Without a terminal and without a cached identity, the plugin raises fnox's authentication error, and fnox offers
-the provider's `auth_command` (`hq unlock`) when it runs in a terminal.
+**Never blocks an agent.** When the identity is locked and nobody can type the passphrase (`HQ_NONINTERACTIVE=1`,
+which agents and CI should get, or no terminal to open), the plugin and `hq` fail at once with `locked_message`
+instead of age waiting on a prompt. Agents often run inside a terminal (tmux) with nobody watching it, so set
+`HQ_NONINTERACTIVE=1` in their environment; with `fnox exec --if-missing error` the command then does not run at all.
+In a terminal of your own, a locked identity asks for the passphrase once (age's prompt) and caches it.
 
 fnox's own [daemon](https://fnox.jdx.dev/guide/daemon.html) still caches resolved values; it is optional. It alone
 is not enough for agents: a value the daemon has not seen yet is resolved outside it, and any change to a
@@ -127,7 +131,7 @@ conformance("my server", async () => ({
 // afterwards: grep your storage for PLANT — it must not be there
 ```
 
-Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.2.0`.
+Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.4.0`.
 
 ## Development
 

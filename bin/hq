@@ -74,6 +74,13 @@ none_clear() { return 1; }
 
 plain() { grep -q 'AGE-SECRET-KEY-' "$1" 2>/dev/null; }
 
+# nobody to type a passphrase (HQ_NONINTERACTIVE for agents and CI, or no terminal): fail now, never wait on a prompt
+noninteractive() {
+  case ${HQ_NONINTERACTIVE:-} in ''|0) ;; *) return 0 ;; esac
+  ! sh -c ': </dev/tty' 2>/dev/null # in a child: a failed redirect on a special builtin would end this shell
+}
+locked() { die "${HQ_LOCKED_MESSAGE:-locked — run \`hq unlock\` in a terminal}"; }
+
 # the identity text, like the plugin: HQ_IDENTITY, a plain file, the cache, or the passphrase (then cached)
 identity() {
   if [ -n "${HQ_IDENTITY:-}" ]; then printf '%s\n' "$HQ_IDENTITY"; return; fi
@@ -81,6 +88,7 @@ identity() {
   if plain "$file"; then cat "$file"; return; fi
   b=$(backend)
   if id=$("${b}_get" "$file"); then printf '%s\n' "$id"; return; fi
+  noninteractive && locked
   id=$(age -d "$file") || die "identity is locked: run hq unlock in a terminal"
   printf '%s\n' "$id" | "${b}_put" "$file"
   printf '%s\n' "$id"
@@ -106,6 +114,7 @@ case $cmd in
     plain "$file" && { echo "$file is not passphrase-protected: nothing to unlock" >&2; exit 0; }
     b=$(backend)
     if "${b}_get" "$file" >/dev/null; then echo "already unlocked ($b)" >&2; exit 0; fi
+    noninteractive && locked
     id=$(age -d "$file") || die "wrong passphrase or no terminal"
     printf '%s\n' "$id" | "${b}_put" "$file"
     [ "$b" = none ] || echo "unlocked for $((TTL / 3600))h ($b)" >&2
