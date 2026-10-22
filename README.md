@@ -17,7 +17,7 @@ Needs `fnox` and `age` / `age-keygen` on `PATH`.
 
 ```sh
 # 1. once per machine: a passphrase-protected identity; prints your public key (age1…)
-fnox plugin install hq hq-org/fnox-plugin-hq#v0.4.0
+fnox plugin install hq hq-org/fnox-plugin-hq#v0.4.1
 ln -s ~/.local/share/fnox/plugins/hq/bin/hq ~/.local/bin/hq
 hq keygen                      # → ~/.config/hq/identity.age
 # 2. register the printed age1… key with the server (tasks: an admin sets it on your Person)
@@ -27,7 +27,7 @@ hq keygen                      # → ~/.config/hq/identity.age
 
 ```toml
 [plugins]
-hq = "hq-org/fnox-plugin-hq#v0.4.0"
+hq = "hq-org/fnox-plugin-hq#v0.4.1"
 
 [providers.hq]
 type = "lua"
@@ -67,11 +67,22 @@ every `fnox exec` by you or your agents, in any shell of your user, decrypts on 
 later (from the web, from a teammate). `hq unlock` does the same explicitly; `hq lock` ends it early;
 `hq status` tells which. `hq decrypt` (ciphertext on stdin, plaintext out) uses the same identity, for re-encryption
 tools such as `tasks secrets reencrypt`.
-**Never blocks an agent.** When the identity is locked and nobody can type the passphrase (`HQ_NONINTERACTIVE=1`,
-which agents and CI should get, or no terminal to open), the plugin and `hq` fail at once with `locked_message`
-instead of age waiting on a prompt. Agents often run inside a terminal (tmux) with nobody watching it, so set
-`HQ_NONINTERACTIVE=1` in their environment; with `fnox exec --if-missing error` the command then does not run at all.
-In a terminal of your own, a locked identity asks for the passphrase once (age's prompt) and caches it.
+**Never blocks an agent.** When the identity is locked and nobody can type the passphrase, the plugin and `hq` fail
+at once with `locked_message` instead of age waiting on a prompt; with `fnox exec --if-missing error` the command then
+does not run at all. In a terminal of your own, a locked identity asks for the passphrase once (age's prompt) and
+caches it. "Someone can type" means:
+
+- the **stdin of your command is a terminal**, and `/dev/tty` opens (age prompts there). A terminal merely existing is
+  not enough: agents run inside tmux, where `/dev/tty` opens, but with stdin `/dev/null` or a pipe and nobody watching.
+  This is fnox's own rule for prompting (`auth_command`).
+- `fnox exec` / `fnox get`: the plugin's commands get stdin `/dev/null` from fnox, so the plugin reads fnox's stdin
+  instead (the one your command inherits): `/proc/<fnox pid>/fd/0` on Linux, `lsof` on macOS (untested on real macOS).
+  When neither answers, the answer is no; `hq unlock` still works.
+- `hq unlock`: its own stdin. `hq decrypt`: its stdin is the ciphertext, so its caller's stdin (the shell,
+  `tasks secrets reencrypt`).
+- `HQ_NONINTERACTIVE=1` forces no (CI; an agent typing into a terminal of its own, e.g. tmux `send-keys`, where stdin
+  is a terminal nobody watches); it wins over `HQ_INTERACTIVE=1`, which forces yes (stdin redirected in a terminal
+  you are watching).
 
 fnox's own [daemon](https://fnox.jdx.dev/guide/daemon.html) still caches resolved values; it is optional. It alone
 is not enough for agents: a value the daemon has not seen yet is resolved outside it, and any change to a
@@ -131,13 +142,14 @@ conformance("my server", async () => ({
 // afterwards: grep your storage for PLANT — it must not be there
 ```
 
-Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.4.0`.
+Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.4.1`.
 
 ## Development
 
 ```sh
 bun install
-bun test            # reference server + conformance, fnox end to end, key cache (lua5.4, keyctl, fake security)
+bun test            # reference server + conformance, fnox end to end, key cache (lua5.4, keyctl, fake security),
+                    # who can type (tmux pane = agent, `script` pseudo-terminal = human)
 ```
 
 MIT License.

@@ -74,10 +74,23 @@ none_clear() { return 1; }
 
 plain() { grep -q 'AGE-SECRET-KEY-' "$1" 2>/dev/null; }
 
-# nobody to type a passphrase (HQ_NONINTERACTIVE for agents and CI, or no terminal): fail now, never wait on a prompt
+flag() { case $1 in ''|0) return 1 ;; *) return 0 ;; esac; }
+
+# is fd 0 of process $1 a terminal? Linux: /proc; macOS: lsof; unknown = no
+stdin_tty() {
+  t=$(readlink "/proc/$1/fd/0" 2>/dev/null) || t=$(lsof -w -a -p "$1" -d 0 -Fn 2>/dev/null | sed -n 's/^n//p')
+  case $t in /dev/pts/*|/dev/tty*|/dev/console) [ -c "$t" ] ;; *) return 1 ;; esac
+}
+
+# nobody to type a passphrase: fail now, never wait on a prompt. A human can type when the user's command has a
+# terminal on stdin and /dev/tty opens (age prompts there); an agent in tmux has the terminal but stdin = /dev/null or
+# a pipe. The user's command is hq itself, except for decrypt: its stdin is the ciphertext, so it is hq's parent
+# (`tasks secrets reencrypt`, the shell). HQ_NONINTERACTIVE=1 forces no (wins), HQ_INTERACTIVE=1 forces yes.
 noninteractive() {
-  case ${HQ_NONINTERACTIVE:-} in ''|0) ;; *) return 0 ;; esac
-  ! sh -c ': </dev/tty' 2>/dev/null # in a child: a failed redirect on a special builtin would end this shell
+  flag "${HQ_NONINTERACTIVE:-}" && return 0
+  flag "${HQ_INTERACTIVE:-}" && return 1
+  sh -c ': </dev/tty' 2>/dev/null || return 0 # in a child: a failed redirect on a special builtin would end this shell
+  if [ "$cmd" = decrypt ]; then ! stdin_tty "$PPID"; else [ ! -t 0 ]; fi
 }
 locked() { die "${HQ_LOCKED_MESSAGE:-locked — run \`hq unlock\` in a terminal}"; }
 

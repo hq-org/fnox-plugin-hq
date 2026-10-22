@@ -2,7 +2,7 @@
 // backend (fake `security` on PATH) and on the real Linux keyring (keyctl, when present). The unlocked identity is
 // seeded the way `hq unlock` stores it; a passphrase typed into a pseudo-terminal (`script`) covers the unlock itself.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { armor, Encrypter, generateX25519Identity, identityToRecipient } from "age-encryption"
@@ -19,10 +19,15 @@ let identity = ""
 let idFile = ""
 let server: ReturnType<typeof Bun.serve>
 
+// SHELL: `script -c` runs its command with $SHELL. HQ_IDENTITY_FILE: never the developer's own identity
+const testEnv = (env: Record<string, string>): Record<string, string> => ({
+  PATH: `${join(dir, "bin")}:${process.env.PATH}`, SHELL: "/bin/sh", FNOX_DAEMON: "off", FNOX_CONFIG_DIR: join(dir, "cfg"), HQ_IDENTITY: "", HQ_IDENTITY_FILE: idFile,
+  HQ_TOKEN: "", HQ_NONINTERACTIVE: "", HQ_INTERACTIVE: "", HQ_LOCKED_MESSAGE: "", FAKE_SECURITY_DIR: join(dir, "keychain"), ...env,
+})
 async function sh(cmd: string[], env: Record<string, string> = {}, stdin?: string) {
   const p = Bun.spawn(setsid && !stdin ? [setsid, "-w", ...cmd] : cmd, {
     cwd: dir, stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
-    env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, FNOX_DAEMON: "off", FNOX_CONFIG_DIR: join(dir, "cfg"), HQ_IDENTITY: "", HQ_TOKEN: "", HQ_NONINTERACTIVE: "", HQ_LOCKED_MESSAGE: "", FAKE_SECURITY_DIR: join(dir, "keychain"), ...env },
+    env: { ...process.env, ...testEnv(env) },
   })
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
   return { out, err, code }
@@ -188,6 +193,109 @@ identity = { provider = "hq-identity", value = ${JSON.stringify(idFile)} }
     expect((await hq(["status"], env)).out.trim()).toBe("locked (macos)")
     expect(keychainItems()).toEqual([])
     expect(readFileSync(join(dir, "keychain/argv.log"), "utf8")).not.toContain("AGE-SECRET-KEY")
+  })
+})
+
+// Who can type the passphrase: the stdin of the user's command is a terminal (and /dev/tty opens). Agent-like = a real
+// tmux pane (so /dev/tty opens) with stdin = /dev/null or a pipe; human-like = a real pseudo-terminal on stdin (`script`).
+describe("who can type: stdin is a terminal, not merely a terminal exists", () => {
+  const env = { HQ_KEY_CACHE: "macos" }
+  const tmux = Bun.which("tmux")
+  const script = Bun.which("script")
+  const msg = "locked \u2014 ask Michael to run `hq unlock`"
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+  let n = 0
+
+  /** Runs `command` in a fresh tmux server's pane, like an agent's shell; resolves when it exits (4 s cap). */
+  async function inTmux(command: string, e: Record<string, string> = {}) {
+    const o = join(dir, `tmux-${++n}`)
+    mkdirSync(o)
+    const exports = Object.entries(testEnv({ ...env, ...e })).map(([k, v]) => `export ${k}=${q(v)}`).join("\n")
+    writeFileSync(join(o, "run.sh"), `${exports}
+cd ${q(dir)}
+: </dev/tty 2>/dev/null && echo yes > ${q(join(o, "tty"))}
+${command} > ${q(join(o, "out"))} 2>&1
+echo $? > ${q(join(o, "rc.tmp"))}; mv ${q(join(o, "rc.tmp"))} ${q(join(o, "rc"))}
+`)
+    const sock = join(o, "sock")
+    const { TMUX: _, TMUX_PANE: __, ...base } = process.env
+    const t0 = Date.now()
+    Bun.spawnSync([tmux!, "-S", sock, "-f", "/dev/null", "new-session", "-d", "-x", "120", "-y", "30", "sh", join(o, "run.sh")], { cwd: dir, env: base })
+    try {
+      while (!existsSync(join(o, "rc"))) {
+        if (Date.now() - t0 > 4_000) throw new Error(`still waiting after 4 s (a prompt nobody answers?): ${command}`)
+        await Bun.sleep(20)
+      }
+      const out = readFileSync(join(o, "out"), "utf8")
+      return { ms: Date.now() - t0, code: Number(readFileSync(join(o, "rc"), "utf8").trim()), out, ttyOpens: existsSync(join(o, "tty")) }
+    } finally {
+      Bun.spawnSync([tmux!, "-S", sock, "kill-server"], { env: base })
+    }
+  }
+  /** Runs `command` on a real pseudo-terminal (stdin, /dev/tty) and types `typed` into it. */
+  const inPty = (command: string, e: Record<string, string> = {}, typed = `${PASS}\n`) =>
+    sh([script!, "-qec", command, "/dev/null"], { ...env, ...e }, typed)
+  const ciphertext = async (text: string) => {
+    const enc = new Encrypter()
+    enc.addRecipient(await identityToRecipient(identity.trim()))
+    return armor.encode(await enc.encrypt(text))
+  }
+  const run = "fnox exec --if-missing error -- sh -c 'test \"$ALPHA\" = alpha-value && echo match'"
+
+  // commands are built when the test runs: idFile is set in beforeAll
+  const agentLike = (what: string, command: () => string, e: Record<string, string> = {}) =>
+    test(`agent-like (tmux pane, ${what}): locked fails at once with the locked message`, async () => {
+      if (!tools || !tmux) return console.warn("skipped: needs fnox, age, tmux")
+      await hq(["lock"], env)
+      const ct = await ciphertext("secret")
+      const r = await inTmux(command(), { HQ_LOCKED_MESSAGE: msg, CT: ct, ...e })
+      expect(r.ttyOpens).toBe(true) // the terminal exists: v0.4.0 called this interactive and age waited forever
+      expect(r.code).not.toBe(0)
+      expect(r.out).toContain(msg)
+      expect(r.out).not.toContain("passphrase")
+      expect(r.out).not.toContain("match")
+      expect(r.ms).toBeLessThan(2_000)
+      expect((await hq(["status"], env)).out.trim()).toBe("locked (macos)")
+    })
+  agentLike("fnox exec, stdin /dev/null", () => `${run} </dev/null`)
+  agentLike("fnox exec, stdin a pipe", () => `echo | ${run}`)
+  agentLike("hq unlock, stdin /dev/null", () => `${q(join(root, "bin/hq"))} unlock ${q(idFile)} </dev/null`)
+  agentLike("hq decrypt, its caller's stdin /dev/null", () => `sh -c 'printf "%s" "$CT" | ${join(root, "bin/hq")} decrypt ${idFile}' </dev/null`)
+  agentLike("HQ_NONINTERACTIVE=1 wins over HQ_INTERACTIVE=1, stdin a terminal", () => run, { HQ_NONINTERACTIVE: "1", HQ_INTERACTIVE: "1" })
+
+  test("human-like (pseudo-terminal on stdin): fnox exec asks for the passphrase once and caches it", async () => {
+    if (!tools || !script) return console.warn("skipped: needs fnox, age, script")
+    await hq(["lock"], env)
+    const r = await inPty(run)
+    expect(r.out).toContain("passphrase")
+    expect(r.out).toContain("match")
+    expect((await hq(["status"], env)).out.trim()).toBe("unlocked (macos)")
+    await hq(["lock"], env)
+  })
+
+  test("human-like: hq unlock asks; hq decrypt behind a pipe asks when its caller has the terminal", async () => {
+    if (!tools || !script) return console.warn("skipped: needs fnox, age, script")
+    await hq(["lock"], env)
+    const u = await inPty(`${join(root, "bin/hq")} unlock ${idFile}`)
+    expect(u.out).toContain("passphrase")
+    expect(u.out).toContain("unlocked for 8h (macos)")
+    await hq(["lock"], env)
+    const d = await inPty(`printf "%s" "$CT" | ${join(root, "bin/hq")} decrypt ${idFile}`, { CT: await ciphertext("re-encrypt me") })
+    expect(d.out).toContain("passphrase")
+    expect(d.out).toContain("re-encrypt me")
+    await hq(["lock"], env)
+  })
+
+  test("HQ_INTERACTIVE=1: asks even when stdin is not a terminal", async () => {
+    if (!tools || !script) return console.warn("skipped: needs fnox, age, script")
+    await hq(["lock"], env)
+    const r = await inPty(`${run} </dev/null`, { HQ_INTERACTIVE: "1" })
+    expect(r.out).toContain("passphrase")
+    expect(r.out).toContain("match")
+    await hq(["lock"], env)
+    const control = await inPty(`${run} </dev/null`, {}, "")
+    expect(control.out).toContain("locked")
+    expect(control.out).not.toContain("match")
   })
 })
 

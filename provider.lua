@@ -81,12 +81,29 @@ local function cache(ctx)
   })
 end
 
---- No one to ask for a passphrase: HQ_NONINTERACTIVE (agents, CI) or no terminal to open. Then a locked identity
---- fails at once instead of age waiting on a prompt nobody answers.
+local function flag(name)
+  local v = os.getenv(name)
+  return v ~= nil and v ~= "" and v ~= "0"
+end
+
+-- A human can type the passphrase when the user's command has a terminal on stdin and /dev/tty opens (age prompts
+-- there). "/dev/tty opens" alone is not enough: an agent's commands run inside tmux with stdin = /dev/null or a pipe,
+-- the terminal exists but nobody watches it. fnox's own rule for prompting is the same (stdin is a TTY).
+-- fnox gives every cmd.run child stdin = /dev/null, so this sh cannot test its own fd 0; it reads the fd 0 of its
+-- parent, fnox, which is the stdin `fnox exec` hands the user's command: /proc on Linux, lsof on macOS. If neither
+-- answers, nobody can type (fail closed: `hq unlock` in a terminal still works).
+local HUMAN = [[
+: </dev/tty 2>/dev/null || exit 1
+t=$(readlink "/proc/$PPID/fd/0" 2>/dev/null) || t=$(lsof -w -a -p "$PPID" -d 0 -Fn 2>/dev/null | sed -n 's/^n//p')
+case $t in /dev/pts/*|/dev/tty*|/dev/console) [ -c "$t" ] ;; *) exit 1 ;; esac
+]]
+
+--- No one to ask for a passphrase: then a locked identity fails at once instead of age waiting on a prompt nobody
+--- answers. HQ_NONINTERACTIVE=1 forces it (wins), HQ_INTERACTIVE=1 forces the prompt.
 local function noninteractive()
-  local v = os.getenv("HQ_NONINTERACTIVE")
-  if v and v ~= "" and v ~= "0" then return true end
-  return not cmd.run({ "sh", "-c", ": </dev/tty" }).ok
+  if flag("HQ_NONINTERACTIVE") then return true end
+  if flag("HQ_INTERACTIVE") then return false end
+  return not cmd.run({ "sh", "-c", HUMAN }).ok
 end
 
 local DEFAULT_LOCKED = "locked — run `hq unlock` in a terminal"
