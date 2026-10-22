@@ -32,8 +32,6 @@ export interface ReferenceOptions {
   tokens: Record<string, { person: string; read: boolean; write: boolean }>
   /** scope → recipients (mutable through setRecipients) */
   recipients: Record<string, string[]>
-  /** personal scopes: scope → its one person (only that person's tokens get in; recipients[scope] = their keys) */
-  personal?: Record<string, string>
 }
 
 export interface AuditEntry { at: string; person: string; action: "read" | "write" | "delete"; scope: string; ref: string }
@@ -57,8 +55,6 @@ export function createReferenceServer(opts: ReferenceOptions) {
     if (!SCOPE.test(scope)) return fail(400, "invalid scope")
     const recipients = opts.recipients[scope]
     if (!recipients) return fail(404, "unknown scope")
-    const owner = opts.personal?.[scope]
-    if (owner !== undefined && owner !== caller.person) return fail(403, "forbidden: a personal scope belongs to its person only")
 
     if (what === "recipients" && !profile && req.method === "GET") {
       if (!caller.read && !caller.write) return fail(403, "forbidden")

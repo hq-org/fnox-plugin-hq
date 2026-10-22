@@ -26,9 +26,6 @@ export interface Target {
   readOnlyToken?: string
   /** Directory holding provider.lua: run the fnox end-to-end cases (skipped when fnox or age is missing). */
   plugin?: { dir: string }
-  /** A personal scope (PROTOCOL.md "Personal scopes"): its owner's token and plain identity, and tokens of others
-   *  (a member with read/write elsewhere; an admin) who must get 403 on every route. */
-  personal?: { scope: string; token: string; identity: string; others: string[] }
 }
 
 const rand = () => Math.random().toString(36).slice(2, 10)
@@ -180,33 +177,6 @@ export function conformance(name: string, target: () => Target | Promise<Target>
       const r = await recipients()
       const res = await call("PUT", `/secrets/default/${key("RO")}`, { token: t.readOnlyToken, body: { ciphertext: await ageEncrypt(r, PLANT), recipients: r } })
       expect(res.status).toBe(403)
-    })
-
-    test("personal scope: recipients = the owner's key only; owner reads and writes; everyone else 403, admins too", async () => {
-      const p = t.personal
-      if (!p) return console.warn("skipped: no personal scope")
-      const at = (token: string, method: string, path: string, body?: unknown) =>
-        fetch(`${t.url.replace(/\/+$/, "")}/v1/scopes/${encodeURIComponent(p.scope)}${path}`, {
-          method, headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: body === undefined ? undefined : JSON.stringify(body),
-        }).then(async (r) => { const text = await r.text(); seen.push(text); return { status: r.status, json: JSON.parse(text || "{}") } })
-      const own = await identityToRecipient(p.identity.split("\n").find((l) => l.startsWith("AGE-SECRET-KEY-"))!)
-      const rs = await at(p.token, "GET", "/recipients")
-      expect(rs.status).toBe(200)
-      expect(rs.json.recipients).toEqual([own])
-      const k = key("MINE")
-      const body = { ciphertext: await ageEncrypt([own], `mine ${PLANT}`), recipients: [own] }
-      expect((await at(p.token, "PUT", `/secrets/default/${k}`, body)).status).toBe(200)
-      const g = await at(p.token, "GET", `/secrets?ref=default/${k}`)
-      expect(await ageDecrypt(p.identity, g.json.secrets[`default/${k}`].ciphertext)).toBe(`mine ${PLANT}`)
-      for (const other of p.others) {
-        expect((await at(other, "GET", "/recipients")).status).toBe(403)
-        expect((await at(other, "GET", `/secrets?ref=default/${k}`)).status).toBe(403)
-        expect((await at(other, "GET", "/secrets")).status).toBe(403)
-        expect((await at(other, "PUT", `/secrets/default/${k}`, body)).status).toBe(403)
-        expect((await at(other, "DELETE", `/secrets/default/${k}`)).status).toBe(403)
-      }
-      // the project scope does not see it
-      expect(Object.keys((await call("GET", `/secrets?ref=default/${k}`)).json.secrets)).toEqual([])
     })
 
     describe("end to end through fnox", () => {

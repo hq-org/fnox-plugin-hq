@@ -12,10 +12,8 @@ const ref = createReferenceServer({
     rw: { person: "alice", read: true, write: true },
     ro: { person: "bob", read: true, write: false },
     none: { person: "carol", read: false, write: false },
-    root: { person: "admin", read: true, write: true },
   },
-  recipients: { "prj_test": [await identityToRecipient(identity), other], usr_alice: [await identityToRecipient(identity)] },
-  personal: { usr_alice: "alice" },
+  recipients: { "prj_test": [await identityToRecipient(identity), other] },
 })
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: ref.fetch })
 afterAll(() => server.stop(true))
@@ -28,7 +26,6 @@ conformance("reference server", () => ({
   readOnlyToken: "ro",
   noReadToken: "none",
   plugin: { dir: join(import.meta.dir, "..") },
-  personal: { scope: "usr_alice", token: "rw", identity, others: ["ro", "root"] },
 }))
 
 test("storage never held the planted plaintext; reads and writes are audited", () => {

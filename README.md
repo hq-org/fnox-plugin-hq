@@ -17,7 +17,7 @@ Needs `fnox` and `age` / `age-keygen` on `PATH`.
 
 ```sh
 # 1. once per machine: a passphrase-protected identity; prints your public key (age1…)
-fnox plugin install hq hq-org/fnox-plugin-hq#v0.3.0
+fnox plugin install hq hq-org/fnox-plugin-hq#v0.2.0
 ln -s ~/.local/share/fnox/plugins/hq/bin/hq ~/.local/bin/hq
 hq keygen                      # → ~/.config/hq/identity.age
 # 2. register the printed age1… key with the server (tasks: an admin sets it on your Person)
@@ -27,7 +27,7 @@ hq keygen                      # → ~/.config/hq/identity.age
 
 ```toml
 [plugins]
-hq = "hq-org/fnox-plugin-hq#v0.3.0"
+hq = "hq-org/fnox-plugin-hq#v0.2.0"
 
 [providers.hq]
 type = "lua"
@@ -72,26 +72,6 @@ the provider's `auth_command` (`hq unlock`) when it runs in a terminal.
 fnox's own [daemon](https://fnox.jdx.dev/guide/daemon.html) still caches resolved values; it is optional. It alone
 is not enough for agents: a value the daemon has not seen yet is resolved outside it, and any change to a
 `fnox.toml` empties it. The key cache covers both.
-
-### Personal secrets in every project
-
-A server with personal scopes (PROTOCOL.md) keeps credentials that are yours alone, encrypted to your key only.
-Declare them once in fnox's global config (`~/.config/fnox/config.toml`, loaded for every project, even under
-`root = true`), as a second provider instance whose scope is your person id:
-
-```toml
-[providers.personal]
-type = "lua"
-plugin = "hq"
-auth_command = "hq unlock"
-options = { endpoint = "https://tasks.example.com/secrets", scope = "usr_…", token_file = "~/.config/tasks/config.json" }
-
-[secrets]
-CHERRY_API_KEY = { provider = "personal", value = "default/CHERRY_API_KEY", env = "exec" }
-```
-
-`fnox set CHERRY_API_KEY --global --provider personal` stores it; `fnox exec -- cherryctl …` in any project gets it.
-`env = "exec"` keeps it out of the interactive shell.
 
 ### Break-glass: fnox's age provider with the same unlock
 
@@ -147,7 +127,7 @@ conformance("my server", async () => ({
 // afterwards: grep your storage for PLANT — it must not be there
 ```
 
-Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.3.0`.
+Add it with `bun add -d github:hq-org/fnox-plugin-hq#v0.2.0`.
 
 ## Development
 
