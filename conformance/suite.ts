@@ -4,8 +4,9 @@
 //   conformance("my server", async () => ({ url, scope, token, identity, noReadToken, readOnlyToken, plugin }))
 //
 // Every value the suite writes contains PLANT (encrypted); afterwards grep your storage for PLANT: a hit = plaintext
-// leaked. Each response body the suite sees is checked for PLANT too. With `plugin` and fnox + age on PATH, the same
-// checks run end to end through `fnox set` / `fnox exec` with this repo's provider.lua.
+// leaked. Each response body the suite sees is checked for PLANT too. With `plugin`, fnox on PATH and `hq` (≥ the one
+// with `hq secrets`: $HQ_BIN or on PATH; the provider is a shim over it), the same checks run end to end through
+// `fnox set` / `fnox exec` with this repo's provider.lua.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -180,7 +181,8 @@ export function conformance(name: string, target: () => Target | Promise<Target>
     })
 
     describe("end to end through fnox", () => {
-      const tools = !!Bun.which("fnox") && !!Bun.which("age")
+      const hq = process.env.HQ_BIN ?? Bun.which("hq") ?? "hq"
+      const tools = !!Bun.which("fnox") && !!Bun.spawnSync([hq, "help"], { stderr: "ignore" }).stdout?.toString().includes("hq secrets exec")
       let dir = ""
       const fnox = async (args: string[]) => {
         const p = Bun.spawn(["fnox", ...args], {
@@ -201,7 +203,7 @@ export function conformance(name: string, target: () => Target | Promise<Target>
       afterAll(() => { if (dir) rmSync(dir, { recursive: true, force: true }) })
 
       test("fnox set encrypts locally; fnox exec gets both values in one batch; the server holds ciphertext", async () => {
-        if (!tools || !t.plugin) return console.warn("skipped: needs fnox and age on PATH and target.plugin")
+        if (!tools || !t.plugin) return console.warn("skipped: needs fnox and hq on PATH and target.plugin")
         const a = key("FA")
         const b = key("FB")
         for (const [k, v] of [[a, `fa ${PLANT} ü`], [b, `fb ${PLANT}`]] as const) {
@@ -217,7 +219,7 @@ export function conformance(name: string, target: () => Target | Promise<Target>
       })
 
       test("fnox set on an existing secret replaces it (put gets the saved ref)", async () => {
-        if (!tools || !t.plugin) return console.warn("skipped: needs fnox and age on PATH and target.plugin")
+        if (!tools || !t.plugin) return console.warn("skipped: needs fnox and hq on PATH and target.plugin")
         const k = key("FR")
         expect((await fnox(["set", k, `one ${PLANT}`, "--provider", "hq"])).code).toBe(0)
         expect((await fnox(["set", k, `two ${PLANT}`, "--provider", "hq"])).code).toBe(0)
@@ -227,7 +229,7 @@ export function conformance(name: string, target: () => Target | Promise<Target>
       })
 
       test("a bad token is an authentication failure, not a crash", async () => {
-        if (!tools || !t.plugin) return console.warn("skipped: needs fnox and age on PATH and target.plugin")
+        if (!tools || !t.plugin) return console.warn("skipped: needs fnox and hq on PATH and target.plugin")
         const r = await fnox(["provider", "test", "hq"])
         expect(r.code).toBe(0)
         const bad = await Bun.file(join(dir, "fnox.toml")).text()
